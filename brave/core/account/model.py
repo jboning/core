@@ -2,15 +2,21 @@
 
 from __future__ import unicode_literals
 
+import os
+import time
+
 from marrow.util.convert import boolean
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.hashes import SHA1
+from cryptography.hazmat.primitives.twofactor.totp import TOTP
 from datetime import datetime, timedelta
 from mongoengine import Document, StringField, EmailField, DateTimeField, BooleanField, ReferenceField, ListField, ValidationError, EmbeddedDocument, EmbeddedDocumentField
 from mongoengine.fields import LongField
+from urllib import urlencode
 from yubico import yubico
 
 from brave.core.util.signal import update_modified_timestamp
 from brave.core.util.field import PasswordField, IPAddressField
-from pyotp import TOTP, random_base32
 
 from web.core import config
 
@@ -54,12 +60,7 @@ class TimeOTP(OTP):
     def verify(self, response):
         """Checks response for validity, taking into account the current time."""
         
-        response = int(response)
-        
-        return self.otp.verify(response)
-    
-    def now(self):
-        return self.otp.now()
+        return self.otp.verify(response, time.time())
     
     @property
     def uri(self):
@@ -71,20 +72,22 @@ class TimeOTP(OTP):
             log.warning("Apparently no one owns the OTP with identifier {0}".format(self.identifier))
             return None
             
-        return self.otp.provisioning_uri("Core Auth - " + owner.username) 
-            
+        return "otpauth://totp/{}?secret={}".format(
+            urlencode("Core Auth - " + owner.username),
+            self.identifier)
         
     @property
     def otp(self):
         """Returns the PyOTP TOTP representation of this object. This is used for things such as creating provisioning
         URIs, QR Codes, and verifying user responses."""
         
-        return TOTP(self.identifier)
+        return TOTP(self.identifier.decode('base32'), 6, SHA1(), backend=default_backend())
     
     @classmethod
     def create(cls):
         """Creates and returns a new TimeOTP object."""
-        otp = cls(identifier=random_base32(), required=False)
+        key = os.urandom(16)
+        otp = cls(identifier=key.encode('base32'), required=False)
         return otp
 
 
